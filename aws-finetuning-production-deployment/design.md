@@ -197,56 +197,171 @@ s3.upload_file('validation.jsonl', bucket, 'training-data/processed/validation.j
 
 **Purpose**: Fine-tune foundation models using Bedrock's managed service.
 
-**AWS GUI Steps**:
+**AWS GUI Steps** (Updated for 2024 Console):
 
 1. **Navigate to Bedrock Console**
-   - Search for "Bedrock"
+   - Go to AWS Console → Search for "Bedrock"
    - Click "Amazon Bedrock"
 
-2. **Access Custom Models**
-   - Click "Custom models" in left sidebar
-   - Click "Create custom model"
+2. **Request Model Access** (First-time setup)
+   - In left sidebar, click "Model access" under "Foundation models"
+   - Click "Manage model access" or "Edit"
+   - Enable access for models you want to fine-tune:
+     - Claude 3 Haiku (recommended for fine-tuning)
+     - Titan Text G1 - Express
+     - Titan Text models
+   - Click "Save changes"
+   - Wait for approval (usually instant, some models may take 24-48 hours)
 
-3. **Select Base Model**
+3. **Access Custom Models** (Updated Path)
+   - In left sidebar, look for "Foundation models" section
+   - Click "Custom models" (may be under "Customization" section)
+   - Click "Customize model" button (previously "Create custom model")
+
+4. **Choose Customization Method**
+   - Select **"Fine-tuning"** (recommended for most use cases)
+   - Alternative: "Continued pre-training" (for domain adaptation)
+   - Click "Next"
+
+5. **Select Base Model**
+   - Choose from models with "Customization available" badge:
+     - **Claude 3 Haiku** (best for instruction following)
+     - **Titan Text G1 - Express** (cost-effective)
+     - **Titan Text Premier** (higher quality)
    - **Model name**: "custom-domain-model-v1"
-   - **Base model**: Select "Claude 3 Haiku" or "Titan Text G1 - Express"
    - Click "Next"
 
-4. **Configure Training Data**
-   - **Training data location**: Browse S3 → select "s3://ml-training-data-.../train.jsonl"
-   - **Validation data location**: Browse S3 → select "s3://ml-training-data-.../validation.jsonl"
-   - **Output data location**: Browse S3 → select "s3://ml-model-artifacts-.../bedrock-models/"
+6. **Configure Training Data** (Updated Interface)
+   - **Job name**: "finetuning-job-v1-[timestamp]"
+   - **Training dataset**: 
+     - Click "Browse S3"
+     - Navigate to: s3://ml-training-data-[account]-[region]/training-data/processed/train.jsonl
+     - Select file
+   - **Validation dataset** (optional but recommended):
+     - Click "Browse S3"
+     - Select: s3://ml-training-data-.../validation.jsonl
+   - **Output location**: 
+     - Browse S3 → s3://ml-model-artifacts-[account]-[region]/bedrock-models/
+   - **Service role**: 
+     - Select existing role with Bedrock and S3 permissions
+     - Or click "Create and use a new service role"
    - Click "Next"
 
-5. **Configure Hyperparameters**
-   - **Epochs**: 3-5 (start with 3)
-   - **Batch size**: 8-16
-   - **Learning rate**: 0.00001-0.0001
-   - **Warmup steps**: 100
+7. **Configure Hyperparameters** (Simplified UI)
+   - **Epochs**: 1-10 (default: 3, recommended: 3-5)
+   - **Batch size**: Auto-configured based on model (typically 8-32)
+   - **Learning rate multiplier**: 0.1-2.0 (default: 1.0)
+     - Use 0.5-1.0 for small datasets
+     - Use 1.0-1.5 for large datasets
+   - **Early stopping**: Enable to prevent overfitting (recommended)
+   - **Early stopping patience**: 2-3 epochs
    - Click "Next"
 
-6. **Review and Create**
-   - Review all settings
-   - Click "Create custom model"
-   - Training will take 2-6 hours depending on data size
+8. **Add Tags** (Optional)
+   - Add tags for cost tracking and organization:
+     - Key: "Project", Value: "ModelFineTuning"
+     - Key: "Environment", Value: "Development"
+   - Click "Next"
 
-7. **Monitor Training**
-   - Go to "Custom models" → Click on your model
-   - View training progress and metrics
-   - Check CloudWatch logs for detailed information
+9. **Review and Submit**
+   - Review all configurations carefully
+   - Verify S3 paths are correct
+   - Check hyperparameters
+   - Click "Create customization job"
+   - Job will appear in "Customization jobs" tab
 
-8. **Provision Custom Model**
-   - Once training completes, click "Purchase provisioned throughput"
-   - **Provisioned throughput name**: "custom-model-endpoint"
-   - **Model units**: Start with 1 (can scale up)
-   - Click "Purchase"
-   - Wait 10-15 minutes for provisioning
+10. **Monitor Training Progress** (Updated Monitoring)
+    - Go to "Customization jobs" tab
+    - Click on your job name
+    - View status: InProgress → Completed/Failed
+    - **Job details** section shows:
+      - Start time and duration
+      - Training data statistics
+      - Hyperparameters used
+    - **Training metrics** tab (new feature):
+      - View loss curves
+      - Monitor validation metrics
+      - Check for overfitting
+    - **CloudWatch logs** link for detailed logs
+    - Training typically takes 2-6 hours depending on:
+      - Dataset size (100-10,000+ examples)
+      - Model size
+      - Number of epochs
 
-9. **Test Custom Model**
-   - Go to "Playgrounds" → "Chat"
-   - Select your custom model from dropdown
-   - Test with sample prompts
-   - Compare responses with base model
+11. **Create Provisioned Throughput** (Changed Process)
+    - Once job status shows "Completed"
+    - Go to "Custom models" tab
+    - Find your completed model
+    - Click model name → Click "Create provisioned throughput" button
+    - Or click "Actions" dropdown → "Create provisioned throughput"
+    
+    **Provisioned Throughput Configuration**:
+    - **Provisioned throughput name**: "custom-model-endpoint-v1"
+    - **Model units**: 
+      - Start with 1 (minimum, ~2-5 requests/sec)
+      - Scale up based on load: 2-10 units for production
+    - **Commitment term**:
+      - "No commitment" (hourly billing, flexible)
+      - "1 month" (discounted rate)
+      - "6 months" (maximum discount)
+    - Click "Create"
+    - Wait 10-20 minutes for provisioning
+    - Status will change: Creating → InService
+
+12. **Test Custom Model** (New Testing Interface)
+    - Go to "Playgrounds" in left sidebar
+    - Select "Chat" or "Text" playground
+    - In model selector dropdown:
+      - Click "Custom models" tab
+      - Select your provisioned model from list
+    - **Test with sample prompts**:
+      - Enter domain-specific prompts
+      - Compare responses with base model
+      - Verify fine-tuning improvements
+    - **Adjust inference parameters**:
+      - Temperature: 0.0-1.0
+      - Top P: 0.1-1.0
+      - Max tokens: 100-4096
+    - Save successful test cases for documentation
+
+13. **API Integration** (For Application Use)
+    ```python
+    import boto3
+    import json
+    
+    bedrock_runtime = boto3.client('bedrock-runtime', region_name='us-east-1')
+    
+    # Your custom model ARN (found in Custom models details)
+    model_id = "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/your-model-id"
+    
+    # For Claude models
+    body = json.dumps({
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 200,
+        "messages": [{
+            "role": "user",
+            "content": "Your prompt here"
+        }],
+        "temperature": 0.7,
+        "top_p": 0.9
+    })
+    
+    response = bedrock_runtime.invoke_model(
+        modelId=model_id,
+        body=body
+    )
+    
+    response_body = json.loads(response['body'].read())
+    print(response_body['content'][0]['text'])
+    ```
+
+**Important Notes**:
+- Data format must be JSONL with exact schema: `{"prompt": "...", "completion": "..."}`
+- Minimum dataset size: 32 examples (recommended: 100-1,000+)
+- Maximum file size: 10 GB
+- Provisioned throughput has minimum 1-hour billing
+- Custom models are region-specific
+- Model artifacts are automatically stored in your S3 output location
 
 ### Phase 4: Fine-Tuning with SageMaker Training (Advanced Control)
 

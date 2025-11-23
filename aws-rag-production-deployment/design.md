@@ -483,24 +483,37 @@ This phase deploys an embedding model to SageMaker for converting text to vector
    - Create a new notebook in Studio
    - Run this test code:
    ```python
-   import boto3
-   import json
-   
-   runtime = boto3.client('sagemaker-runtime')
-   
-   payload = {
-       "text_inputs": ["This is a test sentence for embedding."]
-   }
-   
-   response = runtime.invoke_endpoint(
-       EndpointName='rag-embedding-endpoint',
-       ContentType='application/json',
-       Body=json.dumps(payload)
-   )
-   
-   result = json.loads(response['Body'].read())
-   print(f"Embedding dimension: {len(result['embedding'][0])}")
-   print(f"First 5 values: {result['embedding'][0][:5]}")
+import boto3
+import json
+
+def get_embedding(text, endpoint_name):
+    runtime = boto3.client("sagemaker-runtime")
+
+    # Correct required payload for JumpStart embeddings
+    payload = {
+        "mode": "embedding",
+        "text_inputs": [text]
+    }
+
+    response = runtime.invoke_endpoint(
+        EndpointName=endpoint_name,
+        ContentType="application/json",
+        Body=json.dumps(payload)
+    )
+
+    result = json.loads(response["Body"].read())
+    return result["embedding"][0]
+
+
+if __name__ == "__main__":
+    endpoint_name = "jumpstart-dft-hf-sentencesimilarity-20251121-121936"
+    text = "This is a test sentence for embedding."
+
+    embedding = get_embedding(text, endpoint_name)
+
+    print("Embedding dimension:", len(embedding))
+    print("First 5 values:", embedding[:5])
+
    ```
 
 9. **Note Endpoint Details** (save for later)
@@ -623,48 +636,45 @@ This phase creates a vector database for storing and searching document embeddin
 4. **Create k-NN Index for Vectors**
    - In the Dev Tools console, paste this command:
    ```json
-   PUT /rag-documents-index
-   {
-     "settings": {
-       "index": {
-         "knn": true,
-         "knn.algo_param.ef_search": 512,
-         "number_of_shards": 2,
-         "number_of_replicas": 1
-       }
-     },
-     "mappings": {
-       "properties": {
-         "document_id": {
-           "type": "keyword"
-         },
-         "content": {
-           "type": "text"
-         },
-         "embedding": {
-           "type": "knn_vector",
-           "dimension": 1024,
-           "method": {
-             "name": "hnsw",
-             "space_type": "cosinesimil",
-             "engine": "nmslib",
-             "parameters": {
-               "ef_construction": 512,
-               "m": 16
-             }
-           }
-         },
-         "metadata": {
-           "type": "object",
-           "properties": {
-             "source": {"type": "keyword"},
-             "page": {"type": "integer"},
-             "timestamp": {"type": "date"}
-           }
-         }
-       }
-     }
-   }
+PUT /rag-documents-index
+{
+  "settings": {
+    "index": {
+      "knn": true,
+      "number_of_shards": 2,
+      "number_of_replicas": 2,
+      "knn.algo_param.ef_search": 512
+    }
+  },
+  "mappings": {
+    "properties": {
+      "document_id": { "type": "keyword" },
+      "content": { "type": "text" },
+      "embedding": {
+        "type": "knn_vector",
+        "dimension": 1024,
+        "method": {
+          "name": "hnsw",
+          "space_type": "cosinesimil",
+          "engine": "lucene",
+          "parameters": {
+            "ef_construction": 512,
+            "m": 16
+          }
+        }
+      },
+      "metadata": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "keyword" },
+          "page": { "type": "integer" },
+          "timestamp": { "type": "date" }
+        }
+      }
+    }
+  }
+}
+
    ```
    - Click the green play button (▶) or press Ctrl+Enter
    - You should see a success response: `"acknowledged": true`
@@ -679,34 +689,79 @@ This phase creates a vector database for storing and searching document embeddin
 6. **Create Index Template for Future Indices** (Optional)
    - This allows automatic index creation with correct settings:
    ```json
-   PUT /_index_template/rag-template
-   {
-     "index_patterns": ["rag-*"],
-     "template": {
-       "settings": {
-         "index": {
-           "knn": true,
-           "knn.algo_param.ef_search": 512
-         }
-       }
-     }
-   }
+ PUT /_index_template/rag-template
+{
+  "index_patterns": ["rag-*"],
+  "template": {
+    "settings": {
+      "index": {
+        "knn": true,
+        "knn.algo_param.ef_search": 512,
+        "number_of_shards": 2,
+        "number_of_replicas": 2
+      }
+    },
+    "mappings": {
+      "properties": {
+        "document_id": { "type": "keyword" },
+        "content": { "type": "text" },
+        "embedding": {
+          "type": "knn_vector",
+          "dimension": 1024,
+          "method": {
+            "name": "hnsw",
+            "space_type": "cosinesimil",
+            "engine": "lucene",
+            "parameters": {
+              "ef_construction": 512,
+              "m": 16
+            }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "source": { "type": "keyword" },
+            "page": { "type": "integer" },
+            "timestamp": { "type": "date" }
+          }
+        }
+      }
+    }
+  }
+}
+
    ```
 
 7. **Test Vector Search Capability**
    - Insert a test document:
    ```json
-   POST /rag-documents-index/_doc/test-1
-   {
-     "document_id": "test-1",
-     "content": "This is a test document for RAG system.",
-     "embedding": [0.1, 0.2, 0.3, ...],
-     "metadata": {
-       "source": "test",
-       "page": 1,
-       "timestamp": "2024-01-01T00:00:00Z"
-     }
-   }
+ POST /rag-documents-index/_update/test-1
+{
+  "scripted_upsert": true,
+  "script": {
+    "source": """
+      float[] arr = new float[1024];
+      for (int i = 0; i < 1024; i++) {
+        arr[i] = (float) Math.random();
+      }
+      ctx._source.document_id = params.id;
+      ctx._source.content = params.content;
+      ctx._source.embedding = arr;
+      ctx._source.metadata = params.metadata;
+    """,
+    "params": {
+      "id": "test-1",
+      "content": "This is a test document for RAG system.",
+      "metadata": {
+        "source": "test",
+        "page": 1,
+        "timestamp": "2024-01-01T00:00:00Z"
+      }
+    }
+  },
+  "upsert": {}
+}
    ```
    - Note: Replace [...] with actual 1024-dimension vector
 
@@ -1115,30 +1170,414 @@ This phase implements the core RAG logic for query processing and response gener
 2. **Setup and Configuration**
    - First cell:
    ```python
-   import boto3
-   import json
-   from opensearchpy import OpenSearch, RequestsHttpConnection
-   
-   # Initialize clients
-   bedrock_runtime = boto3.client('bedrock-runtime', region_name='us-east-1')
-   sagemaker_runtime = boto3.client('sagemaker-runtime')
-   
-   # Configuration
-   EMBEDDING_ENDPOINT = 'rag-embedding-endpoint'
-   OPENSEARCH_ENDPOINT = 'vpc-rag-vector-db-abc123.us-east-1.es.amazonaws.com'
-   OPENSEARCH_INDEX = 'rag-documents-index'
-   OPENSEARCH_USERNAME = 'admin'
-   OPENSEARCH_PASSWORD = '[your-password]'
-   BEDROCK_MODEL_ID = 'anthropic.claude-3-sonnet-20240229-v1:0'
-   
-   # Connect to OpenSearch
-   opensearch_client = OpenSearch(
-       hosts=[{'host': OPENSEARCH_ENDPOINT, 'port': 443}],
-       http_auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
-       use_ssl=True,
-       verify_certs=True,
-       connection_class=RequestsHttpConnection
-   )
+  !pip install opensearch-py boto3 PyPDF2 langchain sentence-transformers requests-aws4auth -q
+
+import boto3
+import json
+from opensearchpy import OpenSearch, RequestsHttpConnection
+import PyPDF2
+from io import BytesIO
+import time
+from typing import List, Dict, Any
+
+# Initialize AWS clients
+s3_client = boto3.client('s3')
+sagemaker_runtime = boto3.client('sagemaker-runtime')
+bedrock_runtime = boto3.client('bedrock-runtime', region_name='us-east-1')
+
+# Configuration
+BUCKET_NAME = 'rag-documents-626635435787-us-west-2'
+EMBEDDING_ENDPOINT = 'jumpstart-dft-hf-sentencesimilarity-20251121-121936'
+OPENSEARCH_ENDPOINT = 'https://search-rag-vector-db-a7ab7inwsvzt5jumexfgjroelm.us-west-2.es.amazonaws.com'
+OPENSEARCH_INDEX = 'rag-documents-index'
+OPENSEARCH_USERNAME = 'admin'
+OPENSEARCH_PASSWORD = 'Yogesh@7596'
+BEDROCK_MODEL_ID = 'anthropic.claude-3-sonnet-20240229-v1:0'
+
+# Initialize OpenSearch client
+opensearch_client = OpenSearch(
+    hosts=[OPENSEARCH_ENDPOINT],
+    http_auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
+
+# ===== EMBEDDING FUNCTIONS =====
+def get_embedding(text: str) -> List[float]:
+    """Get embedding vector from SageMaker endpoint"""
+    payload_formats = [
+        {"text_inputs": text, "mode": "embedding"},
+        {"text_inputs": [text], "mode": "embedding"},
+        {"inputs": text},
+        {"inputs": [text]},
+        {"text_inputs": text}
+    ]
+    
+    for payload in payload_formats:
+        try:
+            print(f"Trying payload format: {list(payload.keys())}")
+            
+            response = sagemaker_runtime.invoke_endpoint(
+                EndpointName=EMBEDDING_ENDPOINT,
+                ContentType='application/json',
+                Body=json.dumps(payload)
+            )
+            
+            result = json.loads(response['Body'].read().decode())
+            
+            print(f"Success with payload format: {list(payload.keys())}")
+            print(f"Response type: {type(result)}")
+            if isinstance(result, dict):
+                print(f"Response keys: {result.keys()}")
+            
+            # Handle response formats
+            if isinstance(result, dict):
+                if 'embedding' in result:
+                    embedding = result['embedding']
+                    print(f"Embedding dimension: {len(embedding)}")
+                    return embedding
+                elif 'embeddings' in result:
+                    if isinstance(result['embeddings'], list) and len(result['embeddings']) > 0:
+                        embedding = result['embeddings'][0]
+                        print(f"Embedding dimension: {len(embedding)}")
+                        return embedding
+                elif 'vectors' in result:
+                    embedding = result['vectors']
+                    print(f"Embedding dimension: {len(embedding)}")
+                    return embedding
+                elif 'sentence_embedding' in result:
+                    embedding = result['sentence_embedding']
+                    print(f"Embedding dimension: {len(embedding)}")
+                    return embedding
+            elif isinstance(result, list):
+                if len(result) > 0:
+                    if isinstance(result[0], list):
+                        embedding = result[0]
+                        print(f"Embedding dimension: {len(embedding)}")
+                        return embedding
+                    else:
+                        embedding = result
+                        print(f"Embedding dimension: {len(embedding)}")
+                        return embedding
+            
+        except Exception as e:
+            print(f"Failed with format {list(payload.keys())}: {str(e)}")
+            continue
+    
+    print("All payload formats failed")
+    return []
+
+def get_query_embedding(query_text: str) -> List[float]:
+    """Convert query to embedding vector"""
+    return get_embedding(query_text)
+
+# ===== DOCUMENT PROCESSING FUNCTIONS =====
+def extract_text_from_pdf(bucket: str, key: str) -> str:
+    """Extract text from PDF file in S3"""
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        pdf_content = response['Body'].read()
+        
+        pdf_file = BytesIO(pdf_content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        
+        return text.strip()
+    
+    except Exception as e:
+        print(f"Error extracting text from PDF {key}: {str(e)}")
+        return ""
+
+def index_document(document_id: str, content: str, embedding: List[float], metadata: Dict[str, Any]):
+    """Index document in OpenSearch"""
+    try:
+        document = {
+            "document_id": document_id,
+            "content": content,
+            "embedding": embedding,
+            "metadata": metadata,
+            "timestamp": time.time()
+        }
+        
+        response = opensearch_client.index(
+            index=OPENSEARCH_INDEX,
+            id=document_id,
+            body=document
+        )
+        
+        print(f"Successfully indexed document: {document_id}")
+        print(f"Embedding dimension: {len(embedding)}")
+        return response
+    
+    except Exception as e:
+        print(f"Error indexing document {document_id}: {str(e)}")
+        return None
+
+def create_index_if_not_exists():
+    """Create OpenSearch index if it doesn't exist"""
+    try:
+        if not opensearch_client.indices.exists(index=OPENSEARCH_INDEX):
+            index_body = {
+                "settings": {
+                    "index": {
+                        "knn": True,
+                        "knn.algo_param.ef_search": 100
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "document_id": {"type": "keyword"},
+                        "content": {"type": "text"},
+                        "embedding": {
+                            "type": "knn_vector",
+                            "dimension": 1024,
+                            "method": {
+                                "name": "hnsw",
+                                "space_type": "l2",
+                                "engine": "nmslib"
+                            }
+                        },
+                        "metadata": {"type": "object"},
+                        "timestamp": {"type": "date"}
+                    }
+                }
+            }
+            
+            opensearch_client.indices.create(
+                index=OPENSEARCH_INDEX,
+                body=index_body
+            )
+            print(f"Created index: {OPENSEARCH_INDEX}")
+        else:
+            print(f"Index {OPENSEARCH_INDEX} already exists")
+    
+    except Exception as e:
+        print(f"Error creating index: {str(e)}")
+
+def process_pdf_documents():
+    """Process all PDF documents in the S3 bucket"""
+    try:
+        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME)
+        
+        if 'Contents' not in response:
+            print("No documents found in the bucket")
+            return
+        
+        processed_count = 0
+        for obj in response['Contents']:
+            key = obj['Key']
+            
+            if key.lower().endswith('.pdf'):
+                print(f"\n--- Processing PDF: {key} ---")
+                
+                content = extract_text_from_pdf(BUCKET_NAME, key)
+                
+                if not content:
+                    print(f"No content extracted from {key}, skipping...")
+                    continue
+                
+                print(f"Extracted content length: {len(content)} characters")
+                
+                content_for_embedding = content[:2000]
+                print(f"Generating embedding for {key}...")
+                embedding = get_embedding(content_for_embedding)
+                
+                if not embedding:
+                    print(f"No embedding generated for {key}, skipping...")
+                    continue
+                
+                print(f"Generated embedding with dimension: {len(embedding)}")
+                
+                metadata = {
+                    "source": f"s3://{BUCKET_NAME}/{key}",
+                    "file_name": key,
+                    "file_type": "pdf",
+                    "content_length": len(content),
+                    "processed_at": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                }
+                
+                document_id = key.replace('/', '_').replace('.', '_')
+                index_response = index_document(document_id, content, embedding, metadata)
+                
+                if index_response:
+                    processed_count += 1
+                
+                time.sleep(1)
+        
+        print(f"\nProcessed {processed_count} documents successfully")
+    
+    except Exception as e:
+        print(f"Error processing PDF documents: {str(e)}")
+
+# ===== SEARCH FUNCTIONS =====
+def search_similar_documents(query: str, top_k: int = 5):
+    """Search for similar documents using vector similarity"""
+    try:
+        query_embedding = get_query_embedding(query)
+        
+        if not query_embedding:
+            print("Failed to generate embedding for query")
+            return []
+        
+        search_body = {
+            "size": top_k,
+            "query": {
+                "knn": {
+                    "embedding": {
+                        "vector": query_embedding,
+                        "k": top_k
+                    }
+                }
+            },
+            "_source": ["document_id", "content", "metadata"]
+        }
+        
+        response = opensearch_client.search(
+            index=OPENSEARCH_INDEX,
+            body=search_body
+        )
+        
+        results = []
+        for hit in response['hits']['hits']:
+            results.append({
+                'document_id': hit['_source']['document_id'],
+                'content': hit['_source']['content'],
+                'metadata': hit['_source']['metadata'],
+                'score': hit['_score']
+            })
+        
+        return results
+    
+    except Exception as e:
+        print(f"Error searching documents: {str(e)}")
+        return []
+
+# ===== RAG QUERY FUNCTION =====
+def rag_query(user_question: str, top_k: int = 3, verbose: bool = True):
+    """Main RAG query function"""
+    if verbose:
+        print(f"Question: {user_question}")
+        print("Step 1: Converting query to embedding...")
+    
+    # Get relevant documents
+    relevant_docs = search_similar_documents(user_question, top_k)
+    
+    if not relevant_docs:
+        return "No relevant documents found."
+    
+    if verbose:
+        print(f"Step 2: Found {len(relevant_docs)} relevant documents")
+    
+    # Prepare context from documents
+    context = ""
+    for i, doc in enumerate(relevant_docs):
+        context += f"Document {i+1} (Score: {doc['score']:.4f}):\n{doc['content']}\n\n"
+    
+    # Prepare prompt for Claude
+    prompt = f"""Human: You are a helpful AI assistant. Use the following documents to answer the user's question. If the answer cannot be found in the documents, say so.
+
+Relevant Documents:
+{context}
+
+User Question: {user_question}
+
+Please provide a comprehensive answer based on the documents above. If the documents don't contain enough information to answer the question, please state that clearly.
+
+Assistant:"""
+
+    try:
+        if verbose:
+            print("Step 3: Generating answer using Claude...")
+        
+        # Invoke Claude via Bedrock
+        response = bedrock_runtime.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1000,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt
+                }]
+            })
+        )
+        
+        result = json.loads(response['body'].read())
+        answer = result['content'][0]['text']
+        
+        if verbose:
+            print("Step 4: Answer generated successfully!")
+        
+        return answer
+        
+    except Exception as e:
+        print(f"Error generating answer: {str(e)}")
+        return f"Error generating answer: {str(e)}"
+
+# ===== TEST FUNCTIONS =====
+def test_embedding_function():
+    """Test the embedding function with a simple text"""
+    print("Testing embedding function...")
+    test_text = "This is a test sentence for embedding generation."
+    embedding = get_embedding(test_text)
+    
+    if embedding:
+        print(f"✓ Embedding test successful! Dimension: {len(embedding)}")
+        return True
+    else:
+        print("✗ Embedding test failed!")
+        return False
+
+def test_rag_system():
+    """Test the complete RAG system"""
+    test_questions = [
+        "What is Amazon SageMaker?",
+        "How do I deploy a model?",
+        "What are the benefits of using this service?"
+    ]
+    
+    for question in test_questions:
+        print("\n" + "="*80)
+        result = rag_query(question, top_k=3)
+        print(f"Question: {question}")
+        print(f"Answer: {result}")
+        print("="*80)
+
+# ===== MAIN EXECUTION =====
+if __name__ == "__main__":
+    print("Initializing RAG System...")
+    
+    # Create index if it doesn't exist
+    create_index_if_not_exists()
+    
+    # Test embedding function first
+    if test_embedding_function():
+        # Process PDF documents (comment this out if you've already processed documents)
+        print("\nProcessing PDF documents...")
+        process_pdf_documents()
+        
+        print("\nRAG System Ready!")
+        print("\nTesting RAG system with sample questions...")
+        test_rag_system()
+        
+        # Interactive mode
+        print("\n" + "="*80)
+        print("Interactive Mode - Type 'quit' to exit")
+        print("="*80)
+        
+        while True:
+            user_question = input("\nEnter your question: ").strip()
+            if user_question.lower() in ['quit', 'exit', 'q']:
+                break
+            if user_question:
+                answer = rag_query(user_question, top_k=3)
+                print(f"\nAnswer: {answer}")
+    else:
+        print("Embedding test failed. Please check the SageMaker endpoint configuration.")
    ```
 
 3. **Create Query Embedding Function**

@@ -283,30 +283,90 @@ This phase sets up the development environment with agent frameworks.
    - Select "Set up for organization"
    - Click "Set up"
 
-3. **Configure Domain**
+3. **Configure Domain Settings**
    - **Domain name**: "agents-development-domain"
-   - **Authentication**: IAM
-   - **VPC**: Select "agents-production-vpc"
-   - **Subnets**: Select private subnets
-   - **Security groups**: Create new or select existing
-   - **Execution role**: Create new role or select "AgentExecutionRole"
+   - **Authentication method**: Select "AWS Identity and Access Management (IAM)"
+   - Click "Next"
+
+4. **Configure Network and Storage**
+   - **VPC**: Select "agents-production-vpc" (created in Phase 1)
+   - **Subnets**: Select both private subnets (10.0.10.0/24 and 10.0.11.0/24)
+   - **Security group(s)**: Select "agents-production-sg" or create new security group
+   - **VPC only mode**: Leave unchecked (allows internet access through NAT Gateway)
+   
+5. **Configure Storage Settings**
+   - **Default S3 bucket for SageMaker Studio**: 
+     - Option 1: Let SageMaker create a default bucket (recommended for quick setup)
+       - SageMaker will create: "sagemaker-{region}-{account-id}"
+     - Option 2: Specify custom bucket (recommended for production)
+       - Select "agents-config-[account-id]-[region]" (created in Phase 1, Component 1.3)
+       - This bucket will store:
+         - Notebook files and outputs
+         - Model artifacts from training
+         - Data processing outputs
+         - Studio workspace files
+   - **Encryption key**: 
+     - Select "Use AWS managed key" (default)
+     - Or select custom KMS key for enhanced security
+   
+6. **Configure Execution Role**
+   - **Execution role**: Select "Use existing role"
+   - Choose "AgentExecutionRole" from dropdown (created in Phase 1, Component 1.4)
+   - This role provides permissions for:
+     - S3 bucket access (read/write to agents-config, agents-tools, agents-logs buckets)
+     - Bedrock model invocation
+     - DynamoDB table access
+     - CloudWatch logging
+   - Click "Next"
+
+7. **Configure Studio Settings**
+   - **Notebook sharing**: Enable if multiple users need to share notebooks
+   - **Default JupyterLab version**: Select latest version (e.g., JupyterLab 3.0 or 4.0)
+   - **SageMaker Projects and JumpStart**: Enable (allows access to pre-built solutions)
+   - Click "Next"
+
+8. **Configure RStudio Settings** (Optional)
+   - Skip this section if not using RStudio
+   - If needed, configure RStudio license and instance type
+   - Click "Next"
+
+9. **Review and Create**
+   - Review all settings carefully:
+     - Domain name: agents-development-domain
+     - VPC: agents-production-vpc
+     - Subnets: Private subnets in 2 AZs
+     - S3 bucket: agents-config-[account-id]-[region]
+     - Execution role: AgentExecutionRole
    - Click "Submit"
+   - Wait 5-10 minutes for domain creation
+   - Status will change from "Pending" → "InService"
 
-4. **Wait for Domain Creation**
-   - Takes 5-10 minutes
-   - Status will show "InService"
+10. **Verify Domain Creation**
+    - Once status shows "InService", click on domain name
+    - Verify configuration:
+      - Domain ID (e.g., d-abc123def456)
+      - Domain ARN
+      - VPC and subnet configuration
+      - S3 bucket location
+    - Note these details for future reference
 
-5. **Create User Profile**
-   - Click on domain name
-   - Click "Add user"
-   - **Name**: "agent-developer"
-   - **Execution role**: AgentExecutionRole
-   - Click "Submit"
-
-6. **Launch Studio**
-   - Click on user profile
-   - Click "Launch" → "Studio"
-   - Wait for Studio to load
+11. **Note S3 Bucket Structure**
+    - The configured S3 bucket will automatically organize files:
+      ```
+      agents-config-[account-id]-[region]/
+      ├── studio-[domain-id]/
+      │   ├── [user-profile-id]/
+      │   │   ├── notebooks/
+      │   │   ├── data/
+      │   │   └── outputs/
+      ├── tool-definitions/          (manually created in Phase 1)
+      ├── agent-prompts/             (manually created in Phase 1)
+      └── workflow-definitions/      (manually created in Phase 1)
+      ```
+    - Studio will automatically use this bucket for all workspace operations
+    - Additional buckets available:
+      - agents-tools-[account-id]-[region]: For custom tool code
+      - agents-logs-[account-id]-[region]: For execution logs
 
 #### Component 2.2: Install Agent Frameworks
 
